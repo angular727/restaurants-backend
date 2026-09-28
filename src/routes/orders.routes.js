@@ -98,6 +98,15 @@ router.patch(
   })
 );
 
+// body: { amount } in minor units. Whole-order discount at the till; 0 removes it.
+router.patch(
+  '/orders/:id/discount',
+  till,
+  asyncHandler(async (req, res) => {
+    res.json({ data: await orderService.setDiscount(req.params.id, req.body.amount) });
+  })
+);
+
 router.post(
   '/orders/:id/complete',
   till,

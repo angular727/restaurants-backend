@@ -336,6 +336,33 @@ async function cancelOrder(orderId, { reason, returnToStock = true } = {}, userI
   });
 }
 
+/**
+ * Set the whole-order discount (minor units; 0 removes it). It is spread over the active lines by
+ * Order.recalculateTotals, so it also covers items added later.
+ */
+async function setDiscount(orderId, amount) {
+  if (!Number.isInteger(amount) || amount < 0) throw badRequest('amount must be a non-negative integer in minor units');
+  const order = await loadOrder(orderId, null);
+  assertEditable(order);
+
+  const previous = order.orderDiscount || 0;
+  order.orderDiscount = 0;
+  order.recalculateTotals();
+  const room = order.subtotal - order.discountTotal;
+  if (amount > room) {
+    throw badRequest('Discount cannot be more than the order total before this discount', 'DISCOUNT_TOO_LARGE', { max: room });
+  }
+
+  order.orderDiscount = amount;
+  order.recalculateTotals();
+  if (order.netPaid > order.grandTotal) {
+    order.orderDiscount = previous;
+    throw conflict('The order is already paid more than the discounted total. Refund first.', 'DISCOUNT_BELOW_PAID');
+  }
+  await order.save();
+  return order;
+}
+
 module.exports = {
   createOrder,
   addItems,
@@ -345,4 +372,5 @@ module.exports = {
   completeOrder,
   cancelOrder,
   setWaiter,
+  setDiscount,
 };

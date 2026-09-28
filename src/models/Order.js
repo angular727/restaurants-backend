@@ -140,6 +140,8 @@ const orderSchema = new Schema(
     // Totals (minor units), maintained by the pre-validate hook
     subtotal: money(),
     discountTotal: money(),
+    // Whole-order discount set at the till; recalculateTotals spreads it over the active lines by value.
+    orderDiscount: money(),
     taxTotal: money(),
     serviceCharge: money(),
     grandTotal: money(),
@@ -211,6 +213,30 @@ orderSchema.methods.recalculateTotals = function recalculateTotals() {
   let taxTotal = 0;
   let linesTotal = 0;
 
+  const active = this.items.filter((l) => l.status !== 'cancelled');
+  for (const line of active) {
+    // Modifiers adjust the price per portion (e.g. "+2 egg" = +$1.00 each), then scale by quantity.
+    const modifierDelta = (line.modifiers || []).reduce((sum, m) => sum + (m.priceDelta || 0), 0);
+    line.lineSubtotal = (line.unitPrice + modifierDelta) * line.quantity;
+  }
+
+  // Whole-order discount, spread over the lines in proportion to what is left after their own discount.
+  const shares = new Map();
+  if ((this.orderDiscount || 0) > 0) {
+    const bases = active.map((l) => l.lineSubtotal - Math.min(l.discountAmount || 0, l.lineSubtotal));
+    const baseTotal = bases.reduce((s, b) => s + b, 0);
+    const wanted = Math.min(this.orderDiscount, baseTotal);
+    if (wanted > 0) {
+      const last = bases.reduce((idx, b, i) => (b > 0 ? i : idx), -1);
+      let given = 0;
+      active.forEach((l, i) => {
+        const share = i === last ? wanted - given : Math.floor((wanted * bases[i]) / baseTotal);
+        shares.set(l, share);
+        given += share;
+      });
+    }
+  }
+
   for (const line of this.items) {
     if (line.status === 'cancelled') {
       line.lineSubtotal = 0;
@@ -218,10 +244,7 @@ orderSchema.methods.recalculateTotals = function recalculateTotals() {
       line.lineTotal = 0;
       continue;
     }
-    // Modifiers adjust the price per portion (e.g. "+2 egg" = +$1.00 each), then scale by quantity.
-    const modifierDelta = (line.modifiers || []).reduce((sum, m) => sum + (m.priceDelta || 0), 0);
-    line.lineSubtotal = (line.unitPrice + modifierDelta) * line.quantity;
-    const discount = Math.min(line.discountAmount || 0, line.lineSubtotal);
+    const discount = Math.min((line.discountAmount || 0) + (shares.get(line) || 0), line.lineSubtotal);
     const net = line.lineSubtotal - discount;
     if (this.pricesIncludeTax) {
       line.taxAmount = net - Math.round(net / (1 + line.taxRate / 100));
