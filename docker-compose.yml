@@ -1,0 +1,50 @@
+# Production stack: MongoDB (single-node replica set, needed for transactions) + API.
+#
+#   cp .env.production.example .env.production   # then set JWT_SECRET and CORS_ORIGINS
+#   docker compose up -d --build
+#   docker compose exec api node src/seed/seed.js   # optional demo data
+#
+# For a real internet-facing deployment, consider MongoDB Atlas instead of the `mongo`
+# service: point MONGO_URI in .env.production at Atlas and remove `mongo` + `depends_on`.
+name: restaurant
+
+services:
+  mongo:
+    image: mongo:7
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    # Only reachable from this machine (e.g. MongoDB Compass):
+    #   mongodb://127.0.0.1:27018/?directConnection=true
+    # Never publish MongoDB on a public interface. It has no auth in this setup and is
+    # protected by the private Docker network.
+    ports:
+      - "127.0.0.1:27018:27017"
+    healthcheck:
+      # Initializes the replica set on first boot, then reports healthy once this node is PRIMARY.
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "try { quit(rs.status().myState === 1 ? 0 : 1) } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }); quit(1) }"
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  api:
+    build: .
+    image: restaurant-api:latest
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    env_file: .env.production # includes MONGO_URI (defaults to the bundled `mongo` service)
+    ports:
+      - "${API_PORT:-4000}:4000"
+    stop_grace_period: 15s
+
+volumes:
+  mongo-data:
