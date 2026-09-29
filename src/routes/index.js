@@ -12,7 +12,9 @@ const { authenticate } = require('../middleware/auth');
 const { resolveTenant } = require('../middleware/tenant');
 const requireRole = require('../middleware/requireRole');
 const asyncHandler = require('../utils/asyncHandler');
-const { TenantMember } = require('../models');
+const { TenantMember, Tenant } = require('../models');
+const { getTenantId } = require('../utils/tenantContext');
+const { badRequest } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -22,6 +24,35 @@ const tenantRouter = express.Router();
 tenantRouter.use(authenticate, resolveTenant);
 
 tenantRouter.get('/tenant', (req, res) => res.json({ data: req.tenant, membership: req.membership }));
+
+// body: { rate?, pricesIncludeTax?, serviceChargeRate? } — percentages 0-100. Orders snapshot
+// these at creation, so changing them only affects orders placed afterwards.
+tenantRouter.patch(
+  '/tenant/tax',
+  requireRole('manager'),
+  asyncHandler(async (req, res) => {
+    const { rate, pricesIncludeTax, serviceChargeRate } = req.body;
+    const set = {};
+    if (rate !== undefined) {
+      if (typeof rate !== 'number' || rate < 0 || rate > 100) throw badRequest('rate must be a number between 0 and 100');
+      set['tax.rate'] = rate;
+    }
+    if (pricesIncludeTax !== undefined) {
+      if (typeof pricesIncludeTax !== 'boolean') throw badRequest('pricesIncludeTax must be a boolean');
+      set['tax.pricesIncludeTax'] = pricesIncludeTax;
+    }
+    if (serviceChargeRate !== undefined) {
+      if (typeof serviceChargeRate !== 'number' || serviceChargeRate < 0 || serviceChargeRate > 100) {
+        throw badRequest('serviceChargeRate must be a number between 0 and 100');
+      }
+      set['tax.serviceChargeRate'] = serviceChargeRate;
+    }
+    if (!Object.keys(set).length) throw badRequest('Nothing to update');
+
+    const tenant = await Tenant.findByIdAndUpdate(getTenantId(), { $set: set }, { new: true, runValidators: true });
+    res.json({ data: tenant });
+  })
+);
 tenantRouter.get(
   '/members',
   requireRole('manager'),
