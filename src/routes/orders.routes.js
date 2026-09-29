@@ -107,6 +107,16 @@ router.patch(
   })
 );
 
+// body: { guestCount?, source?, notes? }. Does not touch type/tableId — see updateDetails().
+router.patch(
+  '/orders/:id/details',
+  floor,
+  asyncHandler(async (req, res) => {
+    const { guestCount, source, notes } = req.body;
+    res.json({ data: await orderService.updateDetails(req.params.id, { guestCount, source, notes }) });
+  })
+);
+
 router.post(
   '/orders/:id/complete',
   till,

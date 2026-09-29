@@ -8,6 +8,7 @@
  *                           on_send_to_kitchen)                              undeducted, free table
  */
 const { Order, MenuItem, Table, Tenant, Counter, TenantMember, InventoryItem } = require('../models');
+const { ORDER_SOURCES } = require('../config/enums');
 const { badRequest, conflict, notFound } = require('../utils/errors');
 const { getTenantId } = require('../utils/tenantContext');
 const { withTransaction } = require('../utils/transaction');
@@ -363,6 +364,33 @@ async function setDiscount(orderId, amount) {
   return order;
 }
 
+/**
+ * Update the non-financial details of an open order: guest count, source, notes. Intentionally
+ * excludes `type` (dine_in/takeaway/delivery) and `tableId` — changing those means releasing or
+ * occupying a table and (for dine_in) a different service charge rate, which is a bigger, riskier
+ * operation than this endpoint is meant for.
+ */
+async function updateDetails(orderId, { guestCount, source, notes } = {}) {
+  const order = await loadOrder(orderId, null);
+  assertEditable(order);
+
+  if (guestCount !== undefined) {
+    const n = Math.round(Number(guestCount));
+    if (!Number.isFinite(n) || n < 1 || n > 500) throw badRequest('guestCount must be between 1 and 500');
+    order.guestCount = n;
+  }
+  if (source !== undefined) {
+    if (!ORDER_SOURCES.includes(source)) throw badRequest(`source must be one of ${ORDER_SOURCES.join(', ')}`);
+    order.source = source;
+  }
+  if (notes !== undefined) {
+    order.notes = String(notes).trim().slice(0, 1000);
+  }
+
+  await order.save();
+  return order;
+}
+
 module.exports = {
   createOrder,
   addItems,
@@ -373,4 +401,5 @@ module.exports = {
   cancelOrder,
   setWaiter,
   setDiscount,
+  updateDetails,
 };
