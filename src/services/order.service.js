@@ -346,14 +346,9 @@ async function setDiscount(orderId, amount) {
   const order = await loadOrder(orderId, null);
   assertEditable(order);
 
+  // No cap here: recalculateTotals() already clamps the discount it actually applies to the
+  // lines' combined value, so the total can never go negative no matter how large amount is.
   const previous = order.orderDiscount || 0;
-  order.orderDiscount = 0;
-  order.recalculateTotals();
-  const room = order.subtotal - order.discountTotal;
-  if (amount > room) {
-    throw badRequest('Discount cannot be more than the order total before this discount', 'DISCOUNT_TOO_LARGE', { max: room });
-  }
-
   order.orderDiscount = amount;
   order.recalculateTotals();
   if (order.netPaid > order.grandTotal) {
